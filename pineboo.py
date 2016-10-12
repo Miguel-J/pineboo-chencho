@@ -1,5 +1,8 @@
-#!/usr/bin/python3
+#!/usr/bin/python3 -u
 # -*# -*- coding: utf-8 -*-
+
+
+
 """
     Bootstrap. Se encarga de inicializar la aplicación y ceder el control a
     pineboolib.main(); para ello acepta los parámetros necesarios de consola
@@ -30,6 +33,8 @@ except ImportError:
 
 try:
     import sip
+    # switch on QVariant in Python3
+    sip.setapi('QVariant', 1)
     sip.setapi('QString', 1)
 
     from PyQt4 import QtGui, QtCore, uic
@@ -132,6 +137,9 @@ def main():
     parser.add_option("--no-python-cache",
                       action="store_true", dest="no_python_cache", default=False,
                       help="Always translate QS to Python")
+    parser.add_option("--preload",
+                      action="store_true", dest="preload", default=False,
+                      help="Load everything. Then exit. (Populates Pineboo cache)")
 
     (options, args) = parser.parse_args()
     app = QtGui.QApplication(sys.argv)
@@ -206,14 +214,25 @@ def main():
     else:
         main_window = mainForm.mainWindow
         main_window.load()
+        ret = 0
         print("Módulos y pestañas ...")
         for k,area in sorted(project.areas.items()):
             main_window.addAreaTab(area)
         for k,module in sorted(project.modules.items()):
             main_window.addModuleInTab(module)
-        print("Abriendo interfaz ...")
-        main_window.show()
-        ret = app.exec_()
+        if options.preload:
+            print("Precarga ...")
+            for action in project.actions:
+                print("* * * Cargando acción %s . . . " % action)
+                try:
+                    project.actions[action].load()
+                except Exception:
+                    print(traceback.format_exc())
+                    project.conn.conn.rollback()
+        else:
+            print("Abriendo interfaz ...")
+            main_window.show()
+            ret = app.exec_()
         mainForm.mainWindow = None
         del main_window
         del project

@@ -11,26 +11,20 @@ import os
 #import re,subprocess
 import traceback
 from lxml import etree
-import psycopg2
 from binascii import unhexlify
 
 import zlib
 
-import sip
-sip.setapi('QString', 1)
 
-from PyQt4 import QtGui, QtCore, uic
+from PyQt4 import QtGui, QtCore
+from pineboolib.fllegacy.FLSettings import FLSettings
 if __name__ == "__main__":
     sys.path.append('..')
 
-import pineboolib
-from pineboolib import qt3ui
-from pineboolib.dbschema.schemaupdater import parseTable
-from pineboolib.qsaglobals import aqtt
-from pineboolib.FLForm import FLForm
 import pineboolib.emptyscript
+from pineboolib import decorators
 
-from pineboolib import qsatype, qsaglobals, DlgConnect
+
 
 from pineboolib.utils import filedir, one, Struct, XMLStruct
 Qt = QtCore.Qt
@@ -47,6 +41,8 @@ class DBAuth(XMLStruct):
 
 
 class Project(object):
+    conn = None # Almacena la conexión principal a la base de datos
+
     def __init__(self):
         self.tree = None
         self.root = None
@@ -111,15 +107,8 @@ class Project(object):
         if not os.path.exists(self.dir("cache")):
             os.makedirs(self.dir("cache"))
         # Conectar:
-        conninfostr = "dbname=%s host=%s port=%s user=%s password=%s connect_timeout=5" % (
-                        self.dbname, self.dbserver.host, self.dbserver.port,
-                        self.dbauth.username, self.dbauth.password
-                    )
-        self.conn = psycopg2.connect(conninfostr)
-        try:
-            self.conn.set_client_encoding("UTF8")
-        except Exception:
-            print(traceback.format_exc())
+
+        self.conn = PNConnection(self.dbname, self.dbserver.host, self.dbserver.port, self.dbauth.username, self.dbauth.password)
 
         self.cur = self.conn.cursor()
         self.areas = {}
@@ -175,6 +164,35 @@ class Project(object):
                 fileobj = File(self, idmodulo, nombre, basedir = root)
                 self.files[nombre] = fileobj
                 self.modules[idmodulo].add_project_file(fileobj)
+
+
+    def saveGeometryForm(self, name, geo):
+        name = "geo/%s" % name
+        FLSettings().writeEntry(name, geo)
+
+
+    def loadGeometryForm(self, name):
+        name = name = "geo/%s" % name
+        return FLSettings().readEntry(name, None)
+
+    def call(self, function, aList , objectContext ):
+        # FIXME: No deberíamos usar este método. En Python hay formas mejores de hacer esto.
+        print("*** JS.CALL :: function:%r   argument.list:%r    context:%r ***" % (function, aList , objectContext ))
+        import pineboolib.qsaglobals
+        fn = None
+        try:
+            fn = eval(function, pineboolib.qsaglobals.__dict__)
+            return fn(*aList)
+        except Exception:
+            print("** JS.CALL :: ERROR:", traceback.format_exc())
+
+        # Hay que resolver la llamada a funcion "function" dentro de qsaglobals
+        # y buscar la resolución de los objetos separando por puntos.
+
+        # la llamada aqui tipica es "flfactalma.beforeCommit_articulos"
+
+
+        return None
 
 class Module(object):
     def __init__(self, project, areaid, name, description, icon):
@@ -259,6 +277,10 @@ class File(object):
 
 class DelayedObjectProxyLoader(object):
     def __init__(self, obj, *args, **kwargs):
+        self._name = "unnamed-loader"
+        if "name" in kwargs:
+            self._name = kwargs["name"]
+            del kwargs["name"]
         self._obj = obj
         self._args = args
         self._kwargs = kwargs
@@ -266,6 +288,7 @@ class DelayedObjectProxyLoader(object):
 
     def __load(self):
         if not self.loaded_obj:
+            print("DelayedObjectProxyLoader: loading %s %r( *%r **%r)" % (self._name, self._obj, self._args, self._kwargs))
             self.loaded_obj = self._obj(*self._args,**self._kwargs)
         return self.loaded_obj
 
@@ -280,6 +303,8 @@ class ModuleActions(object):
         self.path = path
         assert path
     def load(self):
+        from pineboolib import qsaglobals
+
         self.parser = etree.XMLParser(
                         ns_clean=True,
                         encoding="ISO-8859-15",
@@ -299,9 +324,11 @@ class ModuleActions(object):
         action.scriptform = self.mod.name
         self.prj.actions[action.name] = action
         if hasattr(qsaglobals,action.name):
-            print("INFO: No se sobreescribe variable de entorno", action.name)
+            #print("INFO: No se sobreescribe variable de entorno", action.name)
+            pass
         else:
-            setattr(qsaglobals,action.name, DelayedObjectProxyLoader(action.load))
+            setattr(qsaglobals,action.name, DelayedObjectProxyLoader(action.load, name="QSA.Module.%s" % action.name))
+
         for xmlaction in self.root:
             action =  XMLAction(xmlaction)
             action.mod = self
@@ -309,7 +336,19 @@ class ModuleActions(object):
             try: name = action.name
             except AttributeError: name = "unnamed"
             self.prj.actions[name] = action
-            #print action
+            #print(":::" , self.mod.name, name)
+            if name != "unnamed":
+                if hasattr(qsaglobals,"form" + name):
+                    #print("INFO: No se sobreescribe variable de entorno", "form" + name)
+                    pass
+                else:
+                    setattr(qsaglobals, "form" + name, DelayedObjectProxyLoader(action.load, name="QSA.Module.%s.Action.form%s" % (self.mod.name,name)))
+
+                if hasattr(qsaglobals,"formRecord" + name):
+                    #print("INFO: No se sobreescribe variable de entorno", "formRecord" + name)
+                    pass
+                else:
+                    setattr(qsaglobals, "formRecord" + name, DelayedObjectProxyLoader(action.load, name="QSA.Module.%s.Action.formRecord%s" % (self.mod.name,name)))
 
     def __contains__(self, k): return k in self.prj.actions
     def __getitem__(self, k): return self.prj.actions[k]
@@ -408,10 +447,14 @@ class XMLMainFormAction(XMLStruct):
     slot = None
     def run(self):
         print("Running MainFormAction:", self.name, self.text, self.slot)
-        action = self.mod.actions[self.name]
-        getattr(action, self.slot, "unknowSlot")()
+        try:
+            action = self.mod.actions[self.name]
+            getattr(action, self.slot, "unknownSlot")()
+        finally:
+            print("END of Running MainFormAction:", self.name, self.text, self.slot)
 
 class XMLAction(XMLStruct):
+
     def __init__(self, *args, **kwargs):
         super(XMLAction,self).__init__(*args, **kwargs)
         self.form = self._v("form")
@@ -423,15 +466,16 @@ class XMLAction(XMLStruct):
         self._loaded = False
         self._record_loaded = False
 
-    def loadRecord(self):
-        if self._record_loaded: return self.formrecord_widget
+    def loadRecord(self, cursor = None):
+        #if self.formrecord_widget is None:
         print("Loading record action %s . . . " % (self.name))
-        parent = None # Sin padre, ya que es ventana propia
-        self.formrecord_widget = FLFormRecord(parent,self, load = True)
+        parent_or_cursor =  cursor # Sin padre, ya que es ventana propia
+        self.formrecord_widget = FLFormRecordDB(parent_or_cursor,self, load = True)
         self.formrecord_widget.setWindowModality(Qt.ApplicationModal)
-        self._record_loaded = True
-        print("End of record action load %s (iface:%s ; widget:%s)"
-              % (self.name,
+        #self._record_loaded = True
+        if self.mainform_widget:
+            print("End of record action load %s (iface:%s ; widget:%s)"
+                % (self.name,
                 repr(self.mainform_widget.iface),
                 repr(self.mainform_widget.widget)
                 )
@@ -460,14 +504,17 @@ class XMLAction(XMLStruct):
         # ... construido antes que cualquier widget
         from pineboolib import mainForm
         w = mainForm.mainWindow
-        self.mainform_widget.init()
+        #self.mainform_widget.init()
         w.addFormTab(self)
         #self.mainform_widget.show()
 
-    def openDefaultFormRecord(self):
+    def formRecord(self):
+        return self.form
+
+    def openDefaultFormRecord(self, cursor = None):
         print("Opening default formRecord for Action", self.name)
-        w = self.loadRecord()
-        w.init()
+        w = self.loadRecord(cursor)
+        #w.init()
         w.show()
 
     def execDefaultScript(self):
@@ -475,117 +522,22 @@ class XMLAction(XMLStruct):
         s = self.load()
         s.iface.main()
 
-    def unknowSlot(self):
-        print("Executing unknow script for Action", self.name)
+    def unknownSlot(self):
+        print("Executing unknown script for Action", self.name)
         #Aquí debería arramcar el script
 
-class FLMainForm(FLForm):
+
+from pineboolib.fllegacy.FLFormDB import FLFormDB
+
+class FLMainForm(FLFormDB):
     """ Controlador dedicado a las ventanas maestras de búsqueda (en pestaña) """
-    iface = None
-    def load(self):
-        if self.loaded: return
-        print("Loading form %s . . . " % self.action.form)
-        self.script = None
-        self.iface = None
-        try: script = self.action.scriptform or None
-        except AttributeError: script = None
-        self.load_script(script)
-        self.resize(550,350)
-        self.layout.insertWidget(0,self.widget)
-        if self.action.form:
-            form_path = self.prj.path(self.action.form+".ui")
-            qt3ui.loadUi(form_path, self.widget)
-
-        self.loaded = True
-
-    def init(self):
-        if self.iface:
-            try:
-                self.iface.init()
-            except Exception as e:
-                print("ERROR al inicializar script de la accion %r:" % self.action.name, e)
-                print(traceback.format_exc(),"---")
-
-    def load_script(self,scriptname):
-        python_script_path = None
-        self.script = pineboolib.emptyscript # primero default, luego sobreescribimos
-        if scriptname:
-            print("Loading script %s . . . " % scriptname)
-            # Intentar convertirlo a Python primero con flscriptparser2
-            script_path = self.prj.path(scriptname+".qs")
-            if not os.path.isfile(script_path): raise IOError
-            python_script_path = (script_path+".xml.py").replace(".qs.xml.py",".py")
-            if not os.path.isfile(python_script_path) or pineboolib.no_python_cache:
-                print("Convirtiendo a Python . . .")
-                #ret = subprocess.call(["flscriptparser2", "--full",script_path])
-                from pineboolib.flparser import postparse
-                postparse.pythonify(script_path)
-
-            if not os.path.isfile(python_script_path):
-                raise AssertionError(u"No se encontró el módulo de Python, falló flscriptparser?")
-            try:
-                self.script = imp.load_source(scriptname,python_script_path)
-                #self.script = imp.load_source(scriptname,filedir(scriptname+".py"), open(python_script_path,"U"))
-            except Exception as e:
-                print("ERROR al cargar script QS para la accion %r:" % self.action.name, e)
-                print(traceback.format_exc(),"---")
-
-        self.script.form = self.script.FormInternalObj(action = self.action, project = self.prj, parent = self)
-        self.widget = self.script.form
-        self.iface = self.widget.iface
+    pass
 
 
-class FLFormRecord(FLForm):
-    """ Controlador dedicado a las ventanas de edición de registro (emergentes) """
-    iface = None
-    def load(self):
-        if self.loaded: return
-        print("Loading (record) form %s . . . " % self.action.formrecord)
-        self.script = None
-        self.iface = None
-        try: script = self.action.scriptformrecord or None
-        except AttributeError: script = None
-        self.load_script(script)
-        self.resize(550,350)
-        self.layout.insertWidget(0,self.widget)
-        if self.action.form:
-            form_path = self.prj.path(self.action.formrecord+".ui")
-            qt3ui.loadUi(form_path, self.widget)
 
-        self.loaded = True
 
-    def init(self):
-        if self.iface:
-            try:
-                self.iface.init()
-            except Exception as e:
-                print("ERROR al inicializar script de la accion %r:" % self.action.name, e)
-                print(traceback.format_exc(),"---")
-
-    def load_script(self,scriptname):
-        python_script_path = None
-        self.script = pineboolib.emptyscript # primero default, luego sobreescribimos
-        if scriptname:
-            print("Loading script %s . . . " % scriptname)
-            # Intentar convertirlo a Python primero con flscriptparser2
-            script_path = self.prj.path(scriptname+".qs")
-            if not os.path.isfile(script_path): raise IOError
-            python_script_path = (script_path+".xml.py").replace(".qs.xml.py",".py")
-            try:
-                if not os.path.isfile(python_script_path) or pineboolib.no_python_cache:
-                    print("Convirtiendo a Python . . .")
-                    #ret = subprocess.call(["flscriptparser2", "--full",script_path])
-                    from pineboolib.flparser import postparse
-                    postparse.pythonify(script_path)
-
-                if not os.path.isfile(python_script_path):
-                    raise AssertionError(u"No se encontró el módulo de Python, falló flscriptparser?")
-                self.script = imp.load_source(scriptname,python_script_path)
-                #self.script = imp.load_source(scriptname,filedir(scriptname+".py"), open(python_script_path,"U"))
-            except Exception as e:
-                print("ERROR al cargar script QS para la accion %r:" % self.action.name, e)
-                print(traceback.format_exc(),"---")
-
-        self.script.form = self.script.FormInternalObj(action = self.action, project = self.prj, parent = self)
-        self.widget = self.script.form
-        self.iface = self.widget.iface
+from pineboolib import qt3ui
+from pineboolib.PNConnection import PNConnection
+from pineboolib.dbschema.schemaupdater import parseTable
+from pineboolib.fllegacy.FLUtil import FLUtil
+from pineboolib.fllegacy.FLFormRecordDB import FLFormRecordDB
