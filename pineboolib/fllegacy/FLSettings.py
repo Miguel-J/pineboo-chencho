@@ -27,12 +27,13 @@ class FLSettings(ProjectClass):
         ret = self.s.value(_key, None) #devuelve un QVariant !!!!
         
         if "geo" in _key:
-            ret = ret.toSize()
-            print("Geo vale", ret)
+            #print("Geo vale", str(ret))
+            #ret = ret.toSize()
+            #print("Geo vale", str(ret))
             if not ret:
                 ret = _def
         else:
-            if ret.toString() == "":
+            if str(ret) == "":
                 ret = _def
         
         #print("Retornando %s ---> %s" % (_key, ret))          
@@ -53,7 +54,6 @@ class FLSettings(ProjectClass):
         ret = self.s.value(key)
         return bool(ret)
         
-    @decorators.BetaImplementation
     def writeEntry(self, key, value):
         self.s.setValue(key, value)
     

@@ -8,6 +8,8 @@ import pineboolib
 
 class FLSqlQuery(ProjectClass):
     
+    countRefQuery = 0
+    connName = None
     """
     Maneja consultas con características específicas para AbanQ, hereda de QSqlQuery.
 
@@ -17,29 +19,53 @@ class FLSqlQuery(ProjectClass):
     @author InfoSiAL S.L.
     """
 
-    def __init__(self, parent = None, connectionName = "default"):
+    def __init__(self, *args):
         super(FLSqlQuery, self).__init__()
-        
+        self.connName = None
         self.d = FLSqlQueryPrivate()
-        self.d.db_ = self._prj.conn
+        self.d.db_ = pineboolib.project.conn
         self.countRefQuery = self.countRefQuery + 1
         self._row = None
+        self._posicion = None
+        self._datos = None
+        retornoQry = None
+        
+        if len(args):
+            retornoQry = pineboolib.project.conn.manager().query(args[0], self)
+        
+        if retornoQry:
+            self = retornoQry
+        
+        if len(args) == 2:
+            self.connName = args[1]
+            
 
 
     def __del__(self):
-        del self.d
+        try:
+            del self.d                        
+            del self._datos
+            self._cursor.close()
+            del self._cursor
+        except:
+            pass
+        
         self.countRefQuery = self.countRefQuery - 1
         
     
     """
     Ejecuta la consulta
     """
-    
-    def exec(self):
+    def exec(self, sql = None):
+        if not sql:
+            sql = self.sql()
+        
+        if not sql:
+            return False
+        
         try:
-            #print(self.sql())
             micursor=self.__damecursor()
-            micursor.execute(self.sql())
+            micursor.execute(sql)
             self._cursor=micursor
         except:
             return False
@@ -48,7 +74,7 @@ class FLSqlQuery(ProjectClass):
     
     @classmethod
     def __damecursor(self):
-        if self.d.db_:
+        if getattr(self.d,"db_", None):
             cursor = self.d.db_.cursor()
         else:
             cursor = pineboolib.project.conn.cursor()
@@ -61,8 +87,10 @@ class FLSqlQuery(ProjectClass):
             self._datos=self._cursor.fetchall()
     
     
-    def  exec_(self):
-        return self.exec()
+    def  exec_(self, conn = None, sql = None):
+        if conn:
+            self.d.db_ = conn
+        return self.exec(sql)
 
     """
     Añade la descripción parámetro al diccionario de parámetros.
@@ -86,7 +114,7 @@ class FLSqlQuery(ProjectClass):
             self.d.groupDict_ = {}
         
         if g:
-            self.d.groupDict_.insert(float(g.level()), g)
+            self.d.groupDict_[g.level()] = g.field()
 
     """
     Tipo de datos diccionario de parametros
@@ -149,7 +177,8 @@ class FLSqlQuery(ProjectClass):
     
     def setSelect(self, s, sep = ","):
         
-        self.d.select_ = s.strip_whitespace()
+        self.d.select_ = s
+        #self.d.select_ = s.strip_whitespace()
         #self.d.select_ = self.d.select_.simplifyWhiteSpace()
         
         if not sep in s and not "*" in s:
@@ -159,7 +188,7 @@ class FLSqlQuery(ProjectClass):
         
         fieldListAux = s.split(sep)
         for f in fieldListAux:
-            f = f.strip_whitespace()
+            f = str(f).strip()
             
         
         table = None
@@ -167,8 +196,12 @@ class FLSqlQuery(ProjectClass):
         self.d.fieldList_.clear()
         
         for f in fieldListAux:
-            table = f[:f.index(".")]
-            field = f[f.index(".") + 1:]
+            try:
+                table = f[:f.index(".")]
+                field = f[f.index(".") + 1:]
+            except:
+                a = 1
+                
             if field == "*":
                 mtd = self.d.db_.manager().metadata(table, True)
                 if mtd:
@@ -191,7 +224,8 @@ class FLSqlQuery(ProjectClass):
            genera la consulta
     """
     def setFrom(self, f):
-        self.d.from_ = f.strip_whitespace()
+        self.d.from_ = f
+        #self.d.from_ = f.strip_whitespace()
         #self.d.from_ = self.d.from_.simplifyWhiteSpace()
 
     """
@@ -202,7 +236,8 @@ class FLSqlQuery(ProjectClass):
     """
     
     def setWhere(self, w):
-        self.d.where_ = w.strip_whitespace()
+        self.d.where_ = w
+        #self.d.where_ = w.strip_whitespace()
         #self.d.where_ = self.d.where_.simplifyWhiteSpace()
 
     """
@@ -213,7 +248,8 @@ class FLSqlQuery(ProjectClass):
     """
     
     def setOrderBy(self, w):
-        self.d.orderBy_ = w.strip_whitespace()
+        self.d.orderBy_ = w
+        #self.d.orderBy_ = w.strip_whitespace()
         #self.d.orderBy_ = self.d.orderBy_.simplifyWhiteSpace()
 
     """
@@ -226,11 +262,15 @@ class FLSqlQuery(ProjectClass):
     @return Cadena de texto con la sentencia completa SQL que genera la consulta
     """
     def sql(self):
-        for tableName in self.d.tablesList_:
-            if not self.d.db_.existsTable(tableName) and not self.d.db_.createTable(tableName):
-                return
+        #for tableName in self.d.tablesList_:
+        #    if not self.d.db_.manager().existsTable(tableName) and not self.d.db_.manager().createTable(tableName):
+        #        return
         
         res = None
+        
+        if not self.d.select_:
+            return False
+        
         
         if not self.d.from_:
             res = "SELECT %s" % self.d.select_
@@ -242,12 +282,16 @@ class FLSqlQuery(ProjectClass):
         if self.d.groupDict_ and not self.d.orderBy_:
             res = res + " ORDER BY "
             initGD = None
-            for gD in self.d.groupDict_:
+            i = 0
+            while i < len(self.d.groupDict_):
+                gD = self.d.groupDict_[i]
                 if not initGD:
                     res = res + gD
                     initGD = True
                 else:
                     res = res + ", " + gD
+                
+                i = i + 1
             
         
         elif self.d.orderBy_:
@@ -491,6 +535,8 @@ class FLSqlQuery(ProjectClass):
     Privado
     """
     d = None
+    
+    _posicion = None
 
     @decorators.NotImplementedWarn
     def isValid(self):
@@ -716,4 +762,18 @@ class FLSqlQueryPrivate():
     """
     db_ = None
 
-
+class FLGroupByQuery(ProjectClass):
+    
+    level_ = None
+    field_ = None
+    
+    def __init__(self, n, v):
+        super(FLGroupByQuery, self).__init__()
+        self.level_ = n
+        self.field_ = v
+    
+    def level(self):
+        return self.level_
+    
+    def field(self):
+        return self.field_

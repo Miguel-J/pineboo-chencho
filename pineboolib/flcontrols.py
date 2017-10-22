@@ -34,6 +34,10 @@ class ProjectClass(QtCore.QObject):
     def __init__(self):
         super(ProjectClass, self).__init__()
         self._prj = pineboolib.project
+    def __iter__(self):
+        # Para soportar el modo Javascript de "attribute" in object
+        # agregamos soporte de iteración
+        return iter(self.__dict__.keys())        
 
 class QCheckBox(QtGui.QCheckBox):
     def __getattr__(self, name): return DefFun(self, name)
@@ -46,6 +50,10 @@ class QCheckBox(QtGui.QCheckBox):
     def checked(self, v):
         self.setCheckState(v)
 
+class QLabel(QtGui.QLabel):
+    def setText(self, text):
+        if not isinstance(text, str): text = str(text)
+        QtGui.QLabel.setText(self, text)
 
 
 class QComboBox(QtGui.QComboBox):
@@ -55,7 +63,7 @@ class QComboBox(QtGui.QComboBox):
 
     def setCurrentItem(self, i): return self.setCurrentIndex(i)
 
-class QButtonGroup(QtGui.QFrame):
+class QButtonGroup(QtGui.QGroupBox):
     def __getattr__(self, name): return DefFun(self, name)
     @property
     def selectedId(self): return 0
@@ -88,169 +96,19 @@ class FLTable(QtGui.QTableWidget):
     def __getattr__(self, name): return DefFun(self, name)
 
 
-
-class FLReportViewer(ProjectClass):
-    Append = 0x01
-    Display = 0x02
-    PageBreak = 0x04
-
-    _requestUpdateReport = QtCore.pyqtSignal(int, name='requestUpdateReport')
-
-    def __init__(self, *args):
-        super(FLReportViewer,self).__init__()
-        #  FLReportViewerInterface() : QObject(0), obj_(0) {
-        #  FLReportViewerInterface(FLReportViewer *obj) : QObject(obj), obj_(0) {
-        #  FLReportViewerInterface(QWidget *w, bool) : QObject(w) {
-        #  FLReportViewerInterface(FLReportEngine *r) : QObject(0) {
-        self.connects()
-
-    def __getattr__(self, name): return DefFun(self, name)
-
-    def connects(self):
-        pass
-
-    @decorators.NotImplementedWarn
-    def renderReport(self, initRow = 0, initCol = 0, append = False, displayReport = True):
-        return True
-
-    @decorators.NotImplementedWarn
-    def renderReport2(self, initRow = 0, initCol = 0, flags = Display):
-        return True
-
-    @decorators.NotImplementedWarn
-    def setReportData(self, xmlDoc_Or_Query):
-        return None
-
-    @decorators.NotImplementedWarn
-    def setReportTemplate(self,  t, style = None):
-        return True
-
-    @decorators.NotImplementedWarn
-    def reportData(self):
-        return None
-
-    @decorators.NotImplementedWarn
-    def reportTemplate(self):
-        return None
-
-    @decorators.NotImplementedWarn
-    def exec_(self):
-        return
-
-    @decorators.NotImplementedWarn
-    def show(self):
-        return
-
-    @decorators.NotImplementedWarn
-    def csvData(self):
-        return None
-
-    @decorators.NotImplementedWarn
-    def printReport(self): return None
-
-    @decorators.NotImplementedWarn
-    def printReportToPS(self,outPsFile): return None
-
-    @decorators.NotImplementedWarn
-    def printReportToPDF(self,outPdfFile): return None
-
-    @decorators.NotImplementedWarn
-    def setNumCopies(self,numCopies): return None
-
-    @decorators.NotImplementedWarn
-    def setPrintToPos(self,ptp): return None
-
-    @decorators.NotImplementedWarn
-    def setPrinterName(self,pName): return None
-
-    @decorators.NotImplementedWarn
-    def reportPrinted(self): return True
-
-    @decorators.NotImplementedWarn
-    def reparent(self,parentFrame): return None
-
-    @decorators.NotImplementedWarn
-    def slotFirstPage(self): return None
-
-    @decorators.NotImplementedWarn
-    def slotLastPage(self): return None
-
-    @decorators.NotImplementedWarn
-    def slotNextPage(self): return None
-
-    @decorators.NotImplementedWarn
-    def slotPrevPage(self): return None
-
-    @decorators.NotImplementedWarn
-    def slotZoomUp(self): return None
-
-    @decorators.NotImplementedWarn
-    def slotZoomDown(self): return None
-
-    @decorators.NotImplementedWarn
-    def exportFileCSVData(self): return None
-
-    @decorators.NotImplementedWarn
-    def exportToPDF(self): return None
-
-    @decorators.NotImplementedWarn
-    def sendEMailPDF(self): return None
-
-    @decorators.NotImplementedWarn
-    def saveSVGStyle(self): return None
-
-    @decorators.NotImplementedWarn
-    def saveSimpleSVGStyle(self): return None
-
-    @decorators.NotImplementedWarn
-    def loadSVGStyle(self): return None
-
-    @decorators.NotImplementedWarn
-    def setAutoClose(self,b): return None
-
-    @decorators.NotImplementedWarn
-    def setResolution(self,dpi): return None
-
-    @decorators.NotImplementedWarn
-    def setPixel(self,relDpi): return None
-
-    @decorators.NotImplementedWarn
-    def setDefaults(self): return None
-
-    @decorators.NotImplementedWarn
-    def updateReport(self): return None
-
-    @decorators.NotImplementedWarn
-    def updateDisplay(self): return None
-
-"""
-  void setStyleName(const QString &style) {
-  MReportViewer *rptViewer() {
-  void setReportEngine(FLReportEngine *r) {
-  void rptViewerEmbedInParent(QWidget *parentFrame) {
-  void setReportPages(FLReportPages *pgs) {
-  FLPicture *getCurrentPage() {
-  FLPicture *getFirstPage() {
-  FLPicture *getPreviousPage() {
-  FLPicture *getNextPage() {
-  FLPicture *getLastPage() {
-  FLPicture *getPageAt(uint i) {
-  void clearPages() {
-  void appendPage() {
-  int getCurrentIndex() {
-  void setCurrentPage(int idx) {
-  void setPageSize(int s) {
-  void setPageOrientation(int o) {
-  void setPageDimensions(QSize dim) {
-  int pageSize() {
-  int pageOrientation() {
-  QSize pageDimensions() {
-  int pageCount() {
-  QObject *child(const QString &objName) {
-  void disableSlotsPrintExports(bool disablePrints = true, bool disableExports = true) {
-  void setName(const QString &n) {
-  FLReportViewer *obj() {
-"""
+class QTabWidget(QtGui.QTabWidget):
+    def setTabEnabled(self, tab, enabled):
+        #print("QTabWidget::setTabEnabled %r : %r" % (tab, enabled))
+        if isinstance(tab, int): return QtGui.QTabWidget.setTabEnabled(self, tab, enabled)
+        if isinstance(tab, str): 
+            tabs = [ str(QtGui.QTabWidget.tabText(self, i)).lower().replace("&","") for i in range(self.count()) ]
+            try:
+                idx = tabs.index(tab.lower())              
+                return QtGui.QTabWidget.setTabEnabled(self, idx, enabled)
+            except ValueError:
+                print("ERROR: Tab not found:: QTabWidget::setTabEnabled %r : %r" % (tab, enabled), tabs)
+                return False
+        print("ERROR: Unknown type for 1st arg:: QTabWidget::setTabEnabled %r : %r" % (tab, enabled))
 
 
 class QLineEdit(QtGui.QLineEdit):
@@ -291,7 +149,14 @@ class QPushButton(QtGui.QPushButton):
     @property
     def pixmap(self):
         return self.icon()
-
+    
+    @property
+    def enabled(self):
+        return self.getEnabled()
+    @enabled.setter
+    def enabled(self, s):
+        return self.setEnabled(s)
+    
     @pixmap.setter
     def pixmap(self, value):
         return self.setIcon(value)

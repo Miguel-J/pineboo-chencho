@@ -10,7 +10,7 @@ from builtins import range
 # Simple parser for FacturaLUX SCripting Language (QSA).
 # -----------------------------------------------------------------------------
 from optparse import OptionParser
-
+import pprint
 import sys, math
 import hashlib
 import ply.yacc as yacc
@@ -54,8 +54,111 @@ precedence = (
 seen_tokens = []
 tokelines =  {}
 last_lexspan = None
+
 def p_parse(token):
-    '''
+    global input_data
+
+    lexspan = list(token.lexspan(0))
+    data = str(token.lexer.lexdata[lexspan[0]:lexspan[1]])
+    if len(lexspan) == 2:
+        fromline = token.lineno(0)
+        global endoffile
+        endoffile = fromline, lexspan, token.slice[0]
+        #print fromline, lexspan, token.slice[0]
+    token[0] = { "00-toktype": str(token.slice[0]), "02-size" : lexspan,  "50-contents" :  [ { "01-type": s.type, "99-value" : s.value} for s in token.slice[1:] ] }
+    numelems = len([ s for s in token.slice[1:] if s.type != 'empty' and s.value is not None ])
+
+    rspan = lexspan[0]
+    if str(token.slice[0]) == 'empty' or numelems == 0: token[0] = None
+    else:
+        rvalues = []
+        for n,s in enumerate(token.slice[1:]):
+            if s.type != 'empty' and s.value is not None:
+                val = None
+                if isinstance(s.value,str):
+                    val = token.lexspan(n+1)[0] + len(s.value) - 1
+                else:
+                    val = token.lexspan(n+1)[1]
+                rvalues.append(val)
+        rspan = max(rvalues)
+    lexspan[1] = rspan
+
+    #if str(token.slice[0]) == 'regexbody':
+    #    token[0] = { "00-toktype": str(token.slice[0]) , "02-size" : lexspan,  "50-contents" :  input_data[lexspan[0]:lexspan[1]+1] }
+
+    #if str(token.slice[0]) == 'regex':
+    #    print "\r\n",str(token.slice[0]) ,":" , input_data[lexspan[0]:lexspan[1]+1]
+    #    print "      " + "\n      ".join([ "%s(%r): %r" % (s.type, token.lexspan(n+1), s.value) for n,s in enumerate(token.slice[1:]) ])
+    global seen_tokens, last_ok_token
+    last_ok_token = token
+    seen_tokens.append((str(token.slice[0]), token.lineno(0),input_data[lexspan[0]:lexspan[1]+1] ))
+    global ok_count
+    ok_count += 1
+    if lexspan[0] not in tokelines:
+        tokelines[lexspan[0]] = token.lexer.lineno
+    global last_lexspan
+    last_lexspan = lexspan
+    
+    
+
+
+
+last_ok_token = None
+error_count = 0
+last_error_token = None
+last_error_line = -1
+ok_count = 0
+
+def p_error(t):
+    global error_count
+    global ok_count
+    global last_error_token
+    global last_error_line, seen_tokens , last_ok_token
+    debug = False # Poner a True para toneladas de debug.
+    # if error_count == 0: print
+    if t is not None:
+        if last_error_token is None or t.lexpos != getattr(last_error_token,"lexpos",None):
+            if abs(last_error_line -  t.lineno) > 4 and ok_count > 1 and error_count < 4:
+                error_count += 1
+                try: print_context(t)
+                except Exception: pass
+                if debug == True:
+                    error_count += 20 # no imprimir mas de un error en debug.
+                    print
+                    for tokname, tokln, tokdata in seen_tokens[-32:]:
+                        if tokln ==  t.lineno:
+                            print(tokname, tokdata)
+                    print(repr(last_ok_token[0]))
+                    for s in last_ok_token.slice[:]:
+                        print(">>>" ,  s.lineno, repr(s), pprint.pformat(s.value,depth=3))
+                last_error_line = t.lineno
+            elif abs(last_error_line -  t.lineno) > 1 and ok_count > 1:
+                last_error_line = t.lineno
+            parser.errok()
+            ok_count = 0
+            return
+
+    ok_count = 0
+    if t is None:
+        if last_error_token != "EOF":
+            print("ERROR: End of the file reached.")
+            global endoffile
+            print("Last data:", endoffile)
+
+            if last_lexspan:
+                try:
+                    print("HINT: Last lexspan:", last_lexspan)
+                    print("HINT: Last line:", tokelines[last_lexspan[0]])
+                except Exception as e:
+                    print("ERROR:", e)
+        last_error_token = "EOF"
+        return t
+    t = parser.token()
+    parser.restart()
+    last_error_token = t
+    return t
+
+p_parse.__doc__ =     '''
     exprval : constant
             | variable
             | funccall
@@ -103,6 +206,8 @@ def p_parse(token):
 
     expression  : base_expression
                 | funcdeclaration_anon
+                | funcdeclaration_anon_exec
+                | LPAREN expression RPAREN
                 | error
 
     case_cblock_list  :  case_block
@@ -121,6 +226,8 @@ def p_parse(token):
                     | vardeclaration
                     | classdeclaration
                     | funcdeclaration
+                    | funcdeclaration_anon
+                    | funcdeclaration_anon_exec
 
     source  : source_element
     source  : source source_element
@@ -171,6 +278,9 @@ def p_parse(token):
     funcdeclaration : FUNCTION ID LPAREN arglist RPAREN optvartype LBRACE basicsource RBRACE
     funcdeclaration : STATIC FUNCTION ID LPAREN arglist RPAREN optvartype LBRACE basicsource RBRACE
     funcdeclaration_anon : FUNCTION LPAREN arglist RPAREN LBRACE basicsource RBRACE
+                         | FUNCTION LPAREN RPAREN LBRACE basicsource RBRACE
+    funcdeclaration_anon_exec : funcdeclaration_anon LPAREN RPAREN
+                              | funcdeclaration_anon LPAREN arglist RPAREN
 
     callarg     : expression
 
@@ -313,7 +423,11 @@ def p_parse(token):
               | DOLLAR
               | SQOUTE
               | DQOUTE
+              | PERIOD
               | BACKSLASH
+              | CONDITIONAL1
+              | EQUALS
+              | OR
               | SCONST
               | error
 
@@ -384,101 +498,7 @@ def p_parse(token):
 
     empty :
     '''
-    global input_data
 
-    lexspan = list(token.lexspan(0))
-    data = str(token.lexer.lexdata[lexspan[0]:lexspan[1]])
-    if len(lexspan) == 2:
-        fromline = token.lineno(0)
-        global endoffile
-        endoffile = fromline, lexspan, token.slice[0]
-        #print fromline, lexspan, token.slice[0]
-    token[0] = { "02-size" : lexspan,  "50-contents" :  [ { "01-type": s.type, "99-value" : s.value} for s in token.slice[1:] ] }
-    numelems = len([ s for s in token.slice[1:] if s.type != 'empty' and s.value is not None ])
-
-    rspan = lexspan[0]
-    if str(token.slice[0]) == 'empty' or numelems == 0: token[0] = None
-    else:
-        rvalues = []
-        for n,s in enumerate(token.slice[1:]):
-            if s.type != 'empty' and s.value is not None:
-                val = None
-                if isinstance(s.value,str):
-                    val = token.lexspan(n+1)[0] + len(s.value) - 1
-                else:
-                    val = token.lexspan(n+1)[1]
-                rvalues.append(val)
-        rspan = max(rvalues)
-    lexspan[1] = rspan
-
-    if str(token.slice[0]) == 'regexbody':
-        token[0] = { "02-size" : lexspan,  "50-contents" :  input_data[lexspan[0]:lexspan[1]+1] }
-
-    #if str(token.slice[0]) == 'regex':
-    #    print "\r\n",str(token.slice[0]) ,":" , input_data[lexspan[0]:lexspan[1]+1]
-    #    print "      " + "\n      ".join([ "%s(%r): %r" % (s.type, token.lexspan(n+1), s.value) for n,s in enumerate(token.slice[1:]) ])
-    global seen_tokens, last_ok_token
-    last_ok_token = token
-    seen_tokens.append((str(token.slice[0]), token.lineno(0),input_data[lexspan[0]:lexspan[1]+1] ))
-    global ok_count
-    ok_count += 1
-    if lexspan[0] not in tokelines:
-        tokelines[lexspan[0]] = token.lexer.lineno
-    global last_lexspan
-    last_lexspan = lexspan
-
-
-
-last_ok_token = None
-error_count = 0
-last_error_token = None
-last_error_line = -1
-ok_count = 0
-
-def p_error(t):
-    global error_count
-    global ok_count
-    global last_error_token
-    global last_error_line, seen_tokens , last_ok_token
-    debug = False # Poner a True para toneladas de debug.
-    # if error_count == 0: print
-    if t is not None:
-        if last_error_token is None or t.lexpos != getattr(last_error_token,"lexpos",None):
-            if abs(last_error_line -  t.lineno) > 4 and ok_count > 1 and error_count < 4:
-                error_count += 1
-                try: print_context(t)
-                except Exception: pass
-                if debug == True:
-                    for tokname, tokln, tokdata in seen_tokens[-32:]:
-                        if tokln ==  t.lineno:
-                            print(tokname, tokdata)
-                    print(repr(last_ok_token[0]))
-                last_error_line = t.lineno
-            elif abs(last_error_line -  t.lineno) > 1 and ok_count > 1:
-                last_error_line = t.lineno
-            parser.errok()
-            ok_count = 0
-            return
-
-    ok_count = 0
-    if t is None:
-        if last_error_token != "EOF":
-            print("ERROR: End of the file reached.")
-            global endoffile
-            print("Last data:", endoffile)
-
-            if last_lexspan:
-                try:
-                    print("HINT: Last lexspan:", last_lexspan)
-                    print("HINT: Last line:", tokelines[last_lexspan[0]])
-                except Exception as e:
-                    print("ERROR:", e)
-        last_error_token = "EOF"
-        return t
-    t = parser.token()
-    parser.restart()
-    last_error_token = t
-    return t
 
 
 # Build the grammar
@@ -567,6 +587,11 @@ def calctree(obj, depth = 0, num = [], otype = "source", alias_mode = 1):
         otype = ctype_alias[otype]
     #print " " * depth , obj['02-size']
     for n,content in enumerate(obj['50-contents']):
+        if not isinstance(content,dict):
+            print("ERROR: content is not a dict!:", repr(content))
+            print(".. obj:", repr(obj))
+            raise TypeError("content is not a dict")
+            continue
         ctype = content['01-type']
         value = content['99-value']
         if ctype in ctype_alias:
@@ -580,7 +605,10 @@ def calctree(obj, depth = 0, num = [], otype = "source", alias_mode = 1):
         if type(value) is dict:
             #print "*"
             if depth < 600:
-                tree_obj = calctree(value,depth+1,num+[str(n)], ctype, alias_mode=alias_mode)
+                try:
+                    tree_obj = calctree(value,depth+1,num+[str(n)], ctype, alias_mode=alias_mode)
+                except Exception:
+                    print("ERROR: trying to calculate member %d on:" % n, repr(obj))
             else:
                 tree_obj = None
             if type(tree_obj) is dict:

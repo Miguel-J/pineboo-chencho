@@ -4,7 +4,7 @@ from __future__ import print_function
 from __future__ import unicode_literals
 from builtins import str
 from builtins import object
-import sys
+import sys,time
 import imp
 #import os.path
 import os
@@ -42,7 +42,8 @@ class DBAuth(XMLStruct):
 
 class Project(object):
     conn = None # Almacena la conexión principal a la base de datos
-
+    debugLevel = 100
+    
     def __init__(self):
         self.tree = None
         self.root = None
@@ -52,11 +53,18 @@ class Project(object):
         self.apppath = None
         self.tmpdir = None
         self.parser = None
+        
 
         self.actions = {}
         self.tables = {}
         self.files = {}
         self.cur = None
+        
+    def setDebugLevel(self, q):
+        Project.debugLevel = q
+        decorators.Options.DEBUG_LEVEL = q
+        qt3ui.Options.DEBUG_LEVEL = q
+        
 
     def load_db(self, dbname, host, port, user, passwd):
         self.dbserver = DBServer()
@@ -106,6 +114,10 @@ class Project(object):
         # Preparar temporal
         if not os.path.exists(self.dir("cache")):
             os.makedirs(self.dir("cache"))
+        
+        if not os.path.exists(self.dir("cache")):
+            os.makedirs(self.dir("cache"))
+            
         # Conectar:
 
         self.conn = PNConnection(self.dbname, self.dbserver.host, self.dbserver.port, self.dbauth.username, self.dbauth.password)
@@ -127,6 +139,7 @@ class Project(object):
         self.cur.execute(""" SELECT idmodulo, nombre, sha::varchar(16) FROM flfiles ORDER BY idmodulo, nombre """)
         f1 = open(self.dir("project.txt"),"w")
         self.files = {}
+        tiempo_ini = time.time()
         if not os.path.exists(self.dir("cache")): raise AssertionError
         for idmodulo, nombre, sha in self.cur:
             if idmodulo not in self.modules: continue # I
@@ -135,8 +148,8 @@ class Project(object):
             self.files[nombre] = fileobj
             self.modules[idmodulo].add_project_file(fileobj)
             f1.write(fileobj.filekey+"\n")
-            if os.path.exists(self.dir("cache",fileobj.filekey)): continue
-            fileobjdir = os.path.dirname(self.dir("cache",fileobj.filekey))
+            if os.path.exists(self.dir("cache" ,fileobj.filekey)): continue
+            fileobjdir = os.path.dirname(self.dir("cache" ,fileobj.filekey))
             if not os.path.exists(fileobjdir):
                 os.makedirs(fileobjdir)
             cur2 = self.conn.cursor()
@@ -144,7 +157,7 @@ class Project(object):
                     + "WHERE idmodulo = %s AND nombre = %s "
                     + "        AND sha::varchar(16) = %s", [idmodulo, nombre, sha] )
             for (contenido,) in cur2:
-                f2 = open(self.dir("cache",fileobj.filekey),"wb")
+                f2 = open(self.dir("cache" , fileobj.filekey),"wb")
                 # La cadena decode->encode corrige el bug de guardado de AbanQ/Eneboo
                 txt = ""
                 try:
@@ -156,7 +169,9 @@ class Project(object):
                     txt = contenido.encode("ISO-8859-15","replace")
 
                 f2.write(txt)
-
+        tiempo_fin = time.time()
+        if Project.debugLevel > 50: print("Descarga del proyecto completo a disco duro: %.3fs" % (tiempo_fin - tiempo_ini))
+        
         # Cargar el núcleo común del proyecto
         idmodulo = 'sys'
         for root, dirs, files in os.walk(filedir("..","share","pineboo")):
@@ -177,14 +192,14 @@ class Project(object):
 
     def call(self, function, aList , objectContext ):
         # FIXME: No deberíamos usar este método. En Python hay formas mejores de hacer esto.
-        print("*** JS.CALL :: function:%r   argument.list:%r    context:%r ***" % (function, aList , objectContext ))
+        if Project.debugLevel > 50: print("*** JS.CALL :: function:%r   argument.list:%r    context:%r ***" % (function, aList , objectContext ))
         import pineboolib.qsaglobals
         fn = None
         try:
             fn = eval(function, pineboolib.qsaglobals.__dict__)
             return fn(*aList)
         except Exception:
-            print("** JS.CALL :: ERROR:", traceback.format_exc())
+            print("** JS.CALL :: ERROR:", traceback.format_exc().splitlines()[-1])
 
         # Hay que resolver la llamada a funcion "function" dentro de qsaglobals
         # y buscar la resolución de los objetos separando por puntos.
@@ -210,7 +225,6 @@ class Module(object):
         self.files[fileobj.filename] = fileobj
 
     def load(self):
-        #print "Loading module %s . . . " % self.name
         pathxml = self.path("%s.xml" % self.name)
         pathui = self.path("%s.ui" % self.name)
         if pathxml is None:
@@ -219,7 +233,7 @@ class Module(object):
         if pathui is None:
             print("ERROR: modulo %r: fichero UI no existe" % (self.name))
             return False
-
+        tiempo_1 = time.time()
         try:
             self.actions = ModuleActions(self, pathxml)
             self.actions.load()
@@ -233,7 +247,8 @@ class Module(object):
         # TODO: Load Main Script:
         self.mainscript = None
         # /-----------------------
-
+        tiempo_2 = time.time()
+        
         for tablefile in self.files:
             if not tablefile.endswith(".mtd"): continue
             name, ext = os.path.splitext(tablefile)
@@ -248,6 +263,9 @@ class Module(object):
                 continue
             self.tables[name] = tableObj
             self.prj.tables[name] = tableObj
+        tiempo_3 = time.time()
+        if tiempo_3 - tiempo_1 > 0.2:
+            if Project.debugLevel > 50: print("Carga del modulo %s : %.3fs ,  %.3fs" % (self.name, tiempo_2-tiempo_1, tiempo_3-tiempo_2))
 
         self.loaded = True
         return True
@@ -260,9 +278,13 @@ class File(object):
         self.module = module
         self.filename = filename
         self.sha = sha
-        self.name, self.ext = os.path.splitext(filename)
+        if filename.endswith(".qs.py"):
+            self.ext = ".qs.py"
+            self.name = os.path.splitext(os.path.splitext(filename)[0])[0]
+        else:
+            self.name, self.ext = os.path.splitext(filename)
         if self.sha:
-            self.filekey = "%s/file%s/%s/%s%s" % (module, self.ext, self.name, sha,self.ext)
+            self.filekey = "%s/%s/file%s/%s/%s%s" % ( self.prj.dbname, module, self.ext, self.name, sha,self.ext)
         else:
             self.filekey = filename
         self.basedir = basedir
@@ -288,7 +310,7 @@ class DelayedObjectProxyLoader(object):
 
     def __load(self):
         if not self.loaded_obj:
-            print("DelayedObjectProxyLoader: loading %s %r( *%r **%r)" % (self._name, self._obj, self._args, self._kwargs))
+            if Project.debugLevel > 50: print("DelayedObjectProxyLoader: loading %s %r( *%r **%r)" % (self._name, self._obj, self._args, self._kwargs))
             self.loaded_obj = self._obj(*self._args,**self._kwargs)
         return self.loaded_obj
 
@@ -302,6 +324,7 @@ class ModuleActions(object):
         self.prj = module.prj
         self.path = path
         assert path
+        
     def load(self):
         from pineboolib import qsaglobals
 
@@ -339,16 +362,16 @@ class ModuleActions(object):
             #print(":::" , self.mod.name, name)
             if name != "unnamed":
                 if hasattr(qsaglobals,"form" + name):
-                    #print("INFO: No se sobreescribe variable de entorno", "form" + name)
+                    if Project.debugLevel > 150: print("INFO: No se sobreescribe variable de entorno", "form" + name)
                     pass
                 else:
                     setattr(qsaglobals, "form" + name, DelayedObjectProxyLoader(action.load, name="QSA.Module.%s.Action.form%s" % (self.mod.name,name)))
 
                 if hasattr(qsaglobals,"formRecord" + name):
-                    #print("INFO: No se sobreescribe variable de entorno", "formRecord" + name)
+                    if Project.debugLevel > 150: print("INFO: No se sobreescribe variable de entorno", "formRecord" + name)
                     pass
                 else:
-                    setattr(qsaglobals, "formRecord" + name, DelayedObjectProxyLoader(action.load, name="QSA.Module.%s.Action.formRecord%s" % (self.mod.name,name)))
+                    setattr(qsaglobals, "formRecord" + name, DelayedObjectProxyLoader(action.loadRecord, name="QSA.Module.%s.Action.formRecord%s" % (self.mod.name,name)))
 
     def __contains__(self, k): return k in self.prj.actions
     def __getitem__(self, k): return self.prj.actions[k]
@@ -446,12 +469,12 @@ class XMLMainFormAction(XMLStruct):
     prj = None
     slot = None
     def run(self):
-        print("Running MainFormAction:", self.name, self.text, self.slot)
+        if Project.debugLevel > 50: print("Running MainFormAction:", self.name, self.text, self.slot)
         try:
             action = self.mod.actions[self.name]
             getattr(action, self.slot, "unknownSlot")()
         finally:
-            print("END of Running MainFormAction:", self.name, self.text, self.slot)
+            if Project.debugLevel > 50: print("END of Running MainFormAction:", self.name, self.text, self.slot)
 
 class XMLAction(XMLStruct):
 
@@ -468,13 +491,13 @@ class XMLAction(XMLStruct):
 
     def loadRecord(self, cursor = None):
         #if self.formrecord_widget is None:
-        print("Loading record action %s . . . " % (self.name))
+        if Project.debugLevel > 50: print("Loading record action %s . . . " % (self.name))
         parent_or_cursor =  cursor # Sin padre, ya que es ventana propia
         self.formrecord_widget = FLFormRecordDB(parent_or_cursor,self, load = True)
         self.formrecord_widget.setWindowModality(Qt.ApplicationModal)
         #self._record_loaded = True
         if self.mainform_widget:
-            print("End of record action load %s (iface:%s ; widget:%s)"
+            if Project.debugLevel > 50: print("End of record action load %s (iface:%s ; widget:%s)"
                 % (self.name,
                 repr(self.mainform_widget.iface),
                 repr(self.mainform_widget.widget)
@@ -484,12 +507,12 @@ class XMLAction(XMLStruct):
 
     def load(self):
         if self._loaded: return self.mainform_widget
-        print("Loading action %s . . . " % (self.name))
+        if Project.debugLevel > 50: print("Loading action %s . . . " % (self.name))
         from pineboolib import mainForm
         w = mainForm.mainWindow
         self.mainform_widget = FLMainForm(w,self, load = True)
         self._loaded = True
-        print("End of action load %s (iface:%s ; widget:%s)"
+        if Project.debugLevel > 50: print("End of action load %s (iface:%s ; widget:%s)"
               % (self.name,
                 repr(self.mainform_widget.iface),
                 repr(self.mainform_widget.widget)
@@ -498,7 +521,7 @@ class XMLAction(XMLStruct):
         return self.mainform_widget
 
     def openDefaultForm(self):
-        print("Opening default form for Action", self.name)
+        if Project.debugLevel > 50: print("Opening default form for Action", self.name)
         self.load()
         # Es necesario importarlo a esta altura, QApplication tiene que ser
         # ... construido antes que cualquier widget
@@ -512,13 +535,13 @@ class XMLAction(XMLStruct):
         return self.form
 
     def openDefaultFormRecord(self, cursor = None):
-        print("Opening default formRecord for Action", self.name)
+        if Project.debugLevel > -50: print("Opening default formRecord for Action", self.name)
         w = self.loadRecord(cursor)
         #w.init()
         w.show()
 
     def execDefaultScript(self):
-        print("Executing default script for Action", self.name)
+        if Project.debugLevel > 50: print("Executing default script for Action", self.name)
         s = self.load()
         s.iface.main()
 

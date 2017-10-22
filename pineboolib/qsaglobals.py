@@ -6,14 +6,27 @@ from builtins import object
 import re
 from PyQt4 import QtCore, QtGui
 
+
 import traceback
 import pineboolib
 from pineboolib import flcontrols
 
-
+import weakref
 from pineboolib.utils import aqtt, auto_qt_translate_text
 
-def parseFloat(x): return float(x)
+def parseFloat(x): 
+    if x is None: return 0
+    return float(x)
+
+def isNaN(x):
+    if not x:
+        return True
+    
+    try:
+        float(x)
+        return False
+    except ValueError:
+        return True
 
 
 # TODO: separar en otro fichero de utilidades
@@ -32,20 +45,35 @@ def ustr1(t):
         return None
 
 def debug(txt):
-    print("DEBUG:", ustr(txt))
+    print("---> DEBUG:", ustr(txt))
 
 
 
 class SysType(object):
     def __init__(self):
-        self._name_user = "database_user"
+        self._name_user = None
 
-    def nameUser(self): return self._name_user
+    def nameUser(self): 
+        return pineboolib.project.conn.db_userName
+    def interactiveGUI(self):
+        return "Pineboo"
+    
     def isLoadedModule(self, modulename):
         prj = pineboolib.project
         return modulename in prj.modules
+    def translate(self, text):
+        return text
 sys = SysType()
 
+def proxy_fn(wf, wr, slot):
+    def fn(*args,**kwargs):
+        f = wf()
+        if not f: return None
+        r = wr()
+        if not r: return None
+        print("Weak connect: receiver: %r:%r" % (r, slot))
+        return f(*args, **kwargs)
+    return fn
 
 def connect(sender, signal, receiver, slot):
     # print "Connect::", sender, signal, receiver, slot
@@ -53,10 +81,13 @@ def connect(sender, signal, receiver, slot):
         print("Connect Error::", sender, signal, receiver, slot)
         return False
     m = re.search(r"^(\w+)\.(\w+)(\(.*\))?", slot)
+    if slot.endswith("()"): slot = slot[:-2]
     remote_fn = getattr(receiver, slot, None)
     if remote_fn:
         try:
-            QtCore.QObject.connect(sender, QtCore.SIGNAL(signal), remote_fn)
+            weak_fn = weakref.WeakMethod(remote_fn)
+            weak_receiver = weakref.ref(receiver)
+            QtCore.QObject.connect(sender, QtCore.SIGNAL(signal), proxy_fn(weak_fn, weak_receiver, slot))
         except RuntimeError as e:
             print("ERROR Connecting:", sender, QtCore.SIGNAL(signal), remote_fn)
             print("ERROR %s : %s" % (e.__class__.__name__, str(e)))
@@ -74,14 +105,19 @@ def connect(sender, signal, receiver, slot):
             return False
 
     else:
-        QtCore.QObject.connect(sender, QtCore.SIGNAL(signal), receiver, QtCore.SLOT(slot))
+        if isinstance(receiver, QtCore.QObject):
+            QtCore.QObject.connect(sender, QtCore.SIGNAL(signal), receiver, QtCore.SLOT(slot))
+        else:
+            print("ERROR: Al realizar connect %r:%r -> %r:%r ; el slot no se reconoce y el receptor no es QObject." % (sender, signal, receiver, slot))
     return True
 
 QMessageBox = QtGui.QMessageBox
 
 class MessageBox(QMessageBox):
     @classmethod
-    def msgbox(cls, typename, text, button0, button1 = None, button2 = None):
+    def msgbox(cls, typename, text, button0, button1 = None, button2 = None, title = None, form = None):
+        if title or form:
+            print("WARN: MessageBox: Se intentó usar título y form, y no está implementado.")
         icon = QMessageBox.NoIcon
         title = "Message"
         if typename == "question":
@@ -141,7 +177,7 @@ class qsa:
     parent = None
     loaded = False
     def __init__(self, parent):
-        if isinstance(parent,str): parent = QtCore.QString(parent)
+        if isinstance(parent,str): parent = parent
         self.parent = parent
         self.loaded = True
 
@@ -176,8 +212,9 @@ class qsa:
                 print(traceback.format_exc(4))
 
 
-from pineboolib.fllegacy import FLUtil
-util = FLUtil.FLUtil() # <- para cuando QS erróneo usa util sin definirla
+from pineboolib.fllegacy.FLUtil import FLUtil
+AQUtil = FLUtil() # A falta de crear AQUtil, usamos la versión anterior
+util = FLUtil() # <- para cuando QS erróneo usa util sin definirla
 
 # -------------------------- FORBIDDEN FRUIT ----------------------------------
 # Esto de aquí es debido a que en Python3 decidieron que era mejor abandonar

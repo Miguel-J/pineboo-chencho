@@ -32,10 +32,10 @@ except ImportError:
     sys.exit(32)
 
 try:
-    import sip
+    #import sip
     # switch on QVariant in Python3
-    sip.setapi('QVariant', 1)
-    sip.setapi('QString', 1)
+    #sip.setapi('QVariant', 1)
+    #sip.setapi('QString', 1)
 
     from PyQt4 import QtGui, QtCore, uic
 except ImportError:
@@ -142,15 +142,37 @@ def main():
                       help="Load everything. Then exit. (Populates Pineboo cache)")
 
     (options, args) = parser.parse_args()
+    
+    
     app = QtGui.QApplication(sys.argv)
-
+    noto_fonts = [
+        "NotoSans-BoldItalic.ttf",
+        "NotoSans-Bold.ttf",
+        "NotoSans-Italic.ttf",
+        "NotoSans-Regular.ttf",
+    ]
+    for fontfile in noto_fonts:
+        QtGui.QFontDatabase.addApplicationFont(filedir("fonts/Noto_Sans", fontfile))
+    
+                                               
+    QtGui.QApplication.setStyle("QtCurve")
+    font = QtGui.QFont('Noto Sans',9)
+    font.setBold(False)
+    font.setItalic(False)
+    QtGui.QApplication.setFont(font)
+        
     pineboolib.no_python_cache = options.no_python_cache
 
     # Es necesario importarlo a esta altura, QApplication tiene que ser construido antes que cualquier widget
     from pineboolib import mainForm
 
     project = pineboolib.main.Project()
-
+    if options.verbose:
+        project.setDebugLevel(100)
+        mainForm.MainForm.setDebugLevel(100)
+    else:
+        project.setDebugLevel(0)
+        mainForm.MainForm.setDebugLevel(0)
     if options.project:
         if not options.project.endswith(".xml"):
             options.project += ".xml"
@@ -167,7 +189,7 @@ def main():
         connection_window.load()
         connection_window.show()
         ret = app.exec_()
-        if connection_window.close():
+        if connection_window.close():    
             if connection_window.ruta:
                 prjpath = connection_window.ruta
                 print("Cargando desde ruta %r " % prjpath)
@@ -175,16 +197,33 @@ def main():
             elif connection_window.database:
                 print("Cargando credenciales")
                 project.load_db(connection_window.database,connection_window.hostname,connection_window.portnumber,connection_window.username,connection_window.password)
+            
+            
+            
+            
         if not connection_window.ruta and not connection_window.database:
             sys.exit(ret)
 
+        #Cargando spashscreen
+    # Create and display the splash screen
+    splash_pix = QtGui.QPixmap(filedir("../share/splashscreen/splash_%s.png" % project.dbname))
+    splash = QtGui.QSplashScreen(splash_pix, QtCore.Qt.WindowStaysOnTopHint)
+    splash.setMask(splash_pix.mask())
+    splash.show()
+    
+    frameGm = splash.frameGeometry()
+    screen = QtGui.QApplication.desktop().screenNumber(QtGui.QApplication.desktop().cursor().pos())
+    centerPoint = QtGui.QApplication.desktop().screenGeometry(screen).center()
+    frameGm.moveCenter(centerPoint)
+    splash.move(frameGm.topLeft())
 
 
-
-    print("Iniciando proyecto ...")
+    splash.showMessage("Iniciando proyecto ...")
+    if options.verbose: print("Iniciando proyecto ...")
     project.run()
 
-    print("Creando interfaz ...")
+    splash.showMessage("Creando interfaz ...")
+    if options.verbose: print("Creando interfaz ...")
     if options.action:
         objaction = None
         for k, module in list(project.modules.items()):
@@ -199,15 +238,17 @@ def main():
 
         main_window = mainForm.mainWindow
         main_window.load()
-        print("Módulos y pestañas ...")
+        splash.showMessage("Módulos y pestañas ...")
+        if options.verbose: print("Módulos y pestañas ...")
         for k,area in sorted(project.areas.items()):
             main_window.addAreaTab(area)
         for k,module in sorted(project.modules.items()):
             main_window.addModuleInTab(module)
-        print("Abriendo interfaz ...")
+        splash.showMessage("Abriendo interfaz ...")
+        if options.verbose: print("Abriendo interfaz ...")
         main_window.show()
-
         objaction.openDefaultForm()
+        splash.hide()
         ret = app.exec_()
         mainForm.mainWindow = None
         return ret
@@ -215,29 +256,36 @@ def main():
         main_window = mainForm.mainWindow
         main_window.load()
         ret = 0
-        print("Módulos y pestañas ...")
+        splash.showMessage("Módulos y pestañas ...")
+        if options.verbose: print("Módulos y pestañas ...")
         for k,area in sorted(project.areas.items()):
             main_window.addAreaTab(area)
         for k,module in sorted(project.modules.items()):
             main_window.addModuleInTab(module)
         if options.preload:
-            print("Precarga ...")
+            if options.verbose: print("Precarga ...")
             for action in project.actions:
-                print("* * * Cargando acción %s . . . " % action)
+                if options.verbose: print("* * * Cargando acción %s . . . " % action)
                 try:
                     project.actions[action].load()
                 except Exception:
                     print(traceback.format_exc())
                     project.conn.conn.rollback()
         else:
-            print("Abriendo interfaz ...")
+            splash.showMessage("Abriendo interfaz ...")
+            if options.verbose: print("Abriendo interfaz ...")
             main_window.show()
+    
+            splash.showMessage("Listo ...")
+            QtCore.QTimer.singleShot(2000, splash.hide)
+            
             ret = app.exec_()
         mainForm.mainWindow = None
         del main_window
         del project
         return ret
-
+    
+    
 if __name__ == "__main__":
     ret = main()
     gc.collect()
