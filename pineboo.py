@@ -54,26 +54,6 @@ import pineboolib.main
 #pineboolib.main.main()
 
 
-"""  
-    Este codigo es para reutilizar la configuracion del mismo equipo con Eneboo
-    Para conseguir la contraseña del fichero en texto plano:
-    password + username+ port+ hostname + db + lastDB
-    print config.get('DBA', 'passwordusuario5432localhostPostgresSQLapertus')
-"""
-
-from os.path import expanduser
-HOME = expanduser("~")
-import configparser
-config = configparser.ConfigParser()
-config.read( HOME + '/.qt/eneboorc')
-
-config['DBA']['db']
-config['DBA']['hostname']
-config['DBA']['lastDB']
-config['DBA']['username']
-config['DBA']['port']
-config['DBA']['rememberPasswd']
-
 def translate_connstring(connstring):
     """
         Acepta un parámetro "connstring" que tenga la forma user@host/dbname
@@ -179,11 +159,10 @@ def main():
         prjpath = filedir("../projects", options.project)
         if not os.path.isfile(prjpath):
             raise ValueError("el proyecto %s no existe." % options.project)
-        project.load(prjpath)            
+        project.load(prjpath)
     elif options.connection:
         user, passwd, host, port, dbname = translate_connstring(options.connection)
         project.load_db(dbname, host, port, user, passwd)
-    
     else:
         connection_window = pineboolib.DlgConnect.DlgConnect()
         connection_window.load()
